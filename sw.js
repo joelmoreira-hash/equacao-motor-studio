@@ -1,4 +1,5 @@
-const CACHE='equacao-motor-shell-v3';
-self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(['./','./index.html','./manifest.webmanifest']);await self.skipWaiting()})()));
-self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k!==CACHE)await caches.delete(k);await self.clients.claim()})()));
-self.addEventListener('fetch',e=>{if(e.request.method==='GET'&&new URL(e.request.url).origin===location.origin){e.respondWith((async()=>{if(e.request.mode==='navigate'||e.request.destination==='document'){try{const fresh=await fetch(e.request);const c=await caches.open(CACHE);c.put('./index.html',fresh.clone());return fresh}catch{return (await caches.match(e.request))||(await caches.match('./index.html'))}}const hit=await caches.match(e.request);if(hit)return hit;return fetch(e.request)})())}});
+const CACHE='equacao-motor-v3-1';
+const CORE=['./','./index.html','./manifest.webmanifest','./studio-background.jpg'];
+self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE))));
+self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))));
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(caches.match(e.request).then(hit=>hit||fetch(e.request).then(res=>{if(res.ok&&new URL(e.request.url).origin===location.origin){const copy=res.clone();caches.open(CACHE).then(c=>c.put(e.request,copy))}return res}))) });
