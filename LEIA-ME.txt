@@ -1,0 +1,16 @@
+EQUAÇÃO MOTOR — AUTO STUDIO AI (versão sem API paga)
+
+1) Descompacte o ZIP.
+2) Para testar no computador, sirva esta pasta num servidor HTTPS/localhost.
+3) Para usar a câmara do telemóvel, publique a pasta num alojamento estático HTTPS gratuito (por exemplo GitHub Pages).
+4) A primeira utilização descarrega o modelo BiRefNet Lite (~100 MB para o ficheiro FP16 ou ~192 MB FP32, conforme o runtime selecionar). O navegador guarda os ficheiros em cache.
+5) O recorte é executado localmente no navegador; não usa fal, créditos nem API de inferência paga.
+
+Limitações:
+- O primeiro download do modelo exige Internet.
+- O processamento depende do hardware e do suporte WebGPU; fallback WASM pode ser lento.
+- O modelo gera uma máscara; verifica sempre os contornos antes de publicar.
+- A composição é um cenário gráfico cinzento e sombra sintética. Não é uma reconstrução física do estúdio.
+- Esta versão não guarda sessões num servidor nem sincroniza entre dispositivos.
+- O modelo BiRefNet Lite é MIT: https://huggingface.co/shozebDev/birefnet-lite-512-onnx
+- Transformers.js é Apache-2.0: https://github.com/huggingface/transformers.js
