@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste SAM 2.1 — Equação Motor</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101318;color:#f3f5f7;font:16px system-ui,Arial;padding:18px;max-width:900px;margin:auto}
+h1{font-size:22px;margin:4px 0 8px}p{color:#b8c0ca;line-height:1.45}.panel{background:#1b222b;border:1px solid #303a46;border-radius:14px;padding:15px;margin:14px 0}
+button,.file{background:#d9e2ec;color:#111923;border:0;border-radius:10px;padding:12px 15px;font-weight:700;font-size:15px;display:inline-block;margin:5px 4px 5px 0}
+button:disabled{opacity:.45}.stage{position:relative;width:100%;min-height:180px;background:#080b0f;border-radius:10px;overflow:hidden;text-align:center}
+canvas{display:block;max-width:100%;height:auto;margin:auto;touch-action:manipulation}
+#status{white-space:pre-wrap;color:#b7d7ff;font-size:14px}
+small{color:#aab4c0}input[type=file]{display:none}
+</style>
+</head>
+<body>
+<h1>Teste independente — SAM 2.1</h1>
+<p>Carrega uma fotografia e toca no carro para pedir ao modelo que selecione esse objeto. Este teste não altera o estúdio principal.</p>
+<div class="panel">
+<label class="file" for="file">Escolher fotografia</label><input id="file" type="file" accept="image/*">
+<button id="load" disabled>Preparar modelo</button>
+<button id="run" disabled>Segmentar ponto</button>
+<button id="reset" disabled>Limpar seleção</button>
+<button id="save" disabled>Guardar PNG</button>
+<div class="stage"><canvas id="view"></canvas></div>
+<p id="status">À espera de uma fotografia.</p>
+<small>Na primeira utilização é necessário descarregar o modelo (cerca de 78 MB de pesos fp16). O processamento é feito no navegador; a disponibilidade de WebGPU depende do dispositivo/navegador.</small>
+</div>
+<script type="module">
+import { AutoProcessor, AutoModel, RawImage, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2';
+const MODEL='CardAnvilModels/sam2.1-hiera-tiny-ONNX';
+const file=document.querySelector('#file'), loadBtn=document.querySelector('#load'), runBtn=document.querySelector('#run'), resetBtn=document.querySelector('#reset'), saveBtn=document.querySelector('#save'), status=document.querySelector('#status'), canvas=document.querySelector('#view'),ctx=canvas.getContext('2d');
+let photo=null, imageFile=null, model=null, processor=null, point=null, selectedMask=null, busy=false, scale=1;
+function say(s){status.textContent=s}
+file.addEventListener('change',async e=>{const f=e.target.files?.[0];if(!f)return;imageFile=f;photo=await createImageBitmap(f);const max=1280;scale=Math.min(1,max/Math.max(photo.width,photo.height));canvas.width=Math.round(photo.width*scale);canvas.height=Math.round(photo.height*scale);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(photo,0,0,canvas.width,canvas.height);point=null;selectedMask=null;loadBtn.disabled=false;runBtn.disabled=true;resetBtn.disabled=false;saveBtn.disabled=true;say('Fotografia carregada. Carrega em “Preparar modelo”.');});
+canvas.addEventListener('pointerdown',e=>{if(!photo)return;const r=canvas.getBoundingClientRect();point=[(e.clientX-r.left)*canvas.width/r.width/scale,(e.clientY-r.top)*canvas.height/r.height/scale];draw();runBtn.disabled=!model;say('Ponto marcado no carro. Carrega em “Segmentar ponto”.');});
+function draw(){ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(photo,0,0,canvas.width,canvas.height);if(selectedMask){const w=selectedMask.width,h=selectedMask.height;const mctx=document.createElement('canvas');mctx.width=w;mctx.height=h;const mc=mctx.getContext('2d');const im=mc.createImageData(w,h);for(let i=0;i<w*h;i++){if(selectedMask.data[i]>0){im.data[i*4]=0;im.data[i*4+1]=190;im.data[i*4+2]=255;im.data[i*4+3]=95;}}mc.putImageData(im,0,0);ctx.drawImage(mctx,0,0,canvas.width,canvas.height);}if(point){ctx.beginPath();ctx.arc(point[0]*scale,point[1]*scale,7,0,Math.PI*2);ctx.fillStyle='#ff3b30';ctx.fill();ctx.strokeStyle='white';ctx.lineWidth=2;ctx.stroke();}}
+loadBtn.addEventListener('click',async()=>{if(busy)return;busy=true;loadBtn.disabled=true;try{say('A descarregar o SAM 2.1 e a preparar o motor… A primeira carga pode demorar.');env.allowLocalModels=false;const device=('gpu' in navigator)?'webgpu':'wasm';processor=await AutoProcessor.from_pretrained(MODEL);model=await AutoModel.from_pretrained(MODEL,{device,dtype:'fp16'});runBtn.disabled=!point;say('Modelo preparado ('+device+'). Toca no carro para marcar um ponto e segmentar.');}catch(err){console.error(err);say('Não foi possível carregar o modelo: '+(err?.message||err)+'\\nSe estiveres no telemóvel, experimenta Chrome atualizado.');loadBtn.disabled=false;}finally{busy=false;}});
+runBtn.addEventListener('click',async()=>{if(!model||!photo||!point||busy)return;busy=true;runBtn.disabled=true;try{say('A analisar o ponto selecionado…');const raw=await RawImage.fromBlob(imageFile);const inputs=await processor(raw,{input_points:[[[point[0],point[1]]]],input_labels:[[[1]]]});const output=await model(inputs);const pred=output.pred_masks;const dims=pred?.dims;const values=pred?.data;if(!dims||!values)throw new Error('O modelo não devolveu uma máscara válida. Formato: '+JSON.stringify(dims));const h=dims[dims.length-2],w=dims[dims.length-1],candidates=dims.length>=5?dims[dims.length-3]:1,scores=output.iou_scores?.data;let best=0;if(scores&&candidates>1){let top=-Infinity;for(let i=0;i<candidates;i++){const v=scores[i]??-Infinity;if(v>top){top=v;best=i}}}const plane=w*h,offset=best*plane,data=new Float32Array(plane);for(let i=0;i<plane;i++)data[i]=values[offset+i];mask={data,width:w,height:h};draw();saveBtn.disabled=false;say('Segmentação concluída. Se a seleção não estiver correta, toca noutro ponto do carro e tenta novamente.');}catch(err){console.error(err);say('Erro na segmentação: '+(err?.message||err));}finally{busy=false;runBtn.disabled=!model||!point;}});
+resetBtn.addEventListener('click',()=>{selectedMask=null;point=null;if(photo)draw();saveBtn.disabled=true;runBtn.disabled=true;say('Seleção limpa. Toca novamente no carro.');});
+saveBtn.addEventListener('click',()=>{if(!photo||!selectedMask)return;const out=document.createElement('canvas');out.width=photo.width;out.height=photo.height;const oc=out.getContext('2d');oc.drawImage(photo,0,0);const w=selectedMask.width,h=selectedMask.height,tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;const tc=tmp.getContext('2d'),id=tc.createImageData(w,h);for(let i=0;i<w*h;i++)id.data[i*4+3]=selectedMask.data[i]>0?255:0;tc.putImageData(id,0,0);const a=document.createElement('canvas');a.width=photo.width;a.height=photo.height;a.getContext('2d').drawImage(tmp,0,0,photo.width,photo.height);oc.globalCompositeOperation='destination-in';oc.drawImage(a,0,0);out.toBlob(b=>{const u=URL.createObjectURL(b),link=document.createElement('a');link.href=u;link.download='sam2-recorte.png';link.click();URL.revokeObjectURL(u);},'image/png');});
+</script>
+</body></html>
