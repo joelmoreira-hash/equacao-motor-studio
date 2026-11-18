@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Equação Motor — BiRefNet Lite teste 2</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:18px;background:#101318;color:#f4f5f7;font:16px system-ui,Arial;max-width:900px;margin:auto}h1{font-size:22px}p{color:#bbc3ce;line-height:1.45}.panel{background:#1b222b;border:1px solid #303a46;border-radius:14px;padding:15px;margin:14px 0}button,.file{display:inline-block;background:#d9e2ec;color:#111923;border:0;border-radius:10px;padding:12px 14px;margin:5px 4px 5px 0;font-weight:700;font-size:15px}button:disabled{opacity:.4}input[type=file]{display:none}.preview{display:grid;grid-template-columns:1fr 1fr;gap:10px}.preview>div{min-width:0}.preview canvas{display:block;width:100%;height:auto;background:repeating-conic-gradient(#333 0% 25%,#222 0% 50%) 50%/18px 18px;border-radius:8px}.tag{font-size:12px;color:#c6d0dc;margin:5px 0}#status{white-space:pre-wrap;color:#b9d9ff;font-size:14px}
+</style>
+</head>
+<body>
+<h1>Teste independente — BiRefNet Lite</h1>
+<p>Segunda versão do teste. Usa diretamente o processador e o modelo BiRefNet. Não altera o estúdio principal.</p>
+<div class="panel">
+<label class="file" for="file">Escolher fotografia</label><input id="file" type="file" accept="image/*">
+<button id="load" disabled>Preparar BiRefNet</button><button id="run" disabled>Remover fundo</button><button id="save" disabled>Guardar PNG</button>
+<p id="status">À espera de uma fotografia.</p>
+<div class="preview">
+<div><div class="tag">Fotografia original</div><canvas id="original"></canvas></div>
+<div><div class="tag">Recorte com transparência</div><canvas id="result"></canvas></div>
+</div>
+<p class="tag">Modelo BiRefNet Lite 512×512. Primeira carga descarrega cerca de 100 MB. Requer WebGPU neste teste.</p>
+</div>
+<script type="module">
+import {AutoProcessor,AutoModel,RawImage,env} from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2';
+env.allowLocalModels=false;env.useBrowserCache=true;
+const MODEL='studioludens/birefnet-lite-512';
+const $=s=>document.querySelector(s),orig=$('#original'),out=$('#result'),octx=orig.getContext('2d'),rctx=out.getContext('2d');
+let bitmap=null,file=null,model=null,processor=null,finalCanvas=null,busy=false;
+function say(s){$('#status').textContent=s}
+$('#file').onchange=async e=>{file=e.target.files?.[0];if(!file)return;bitmap=await createImageBitmap(file);const scale=Math.min(1,1200/Math.max(bitmap.width,bitmap.height));orig.width=Math.round(bitmap.width*scale);orig.height=Math.round(bitmap.height*scale);out.width=orig.width;out.height=orig.height;octx.drawImage(bitmap,0,0,orig.width,orig.height);rctx.clearRect(0,0,out.width,out.height);finalCanvas=null;$('#load').disabled=false;$('#run').disabled=true;$('#save').disabled=true;say('Fotografia carregada. Prepara o BiRefNet Lite.')};
+$('#load').onclick=async()=>{if(busy)return;busy=true;$('#load').disabled=true;try{if(!('gpu'in navigator))throw new Error('Este navegador não disponibiliza WebGPU. Atualiza o Chrome para testar.');say('A descarregar e preparar o BiRefNet Lite…');model=await AutoModel.from_pretrained(MODEL,{dtype:'fp16',device:'webgpu'});processor=await AutoProcessor.from_pretrained(MODEL);$('#run').disabled=false;say('Modelo preparado. Carrega em Remover fundo.')}catch(e){console.error(e);say('Erro ao preparar modelo: '+(e?.message||e));$('#load').disabled=false}finally{busy=false}};
+$('#run').onclick=async()=>{if(!model||!processor||!bitmap||busy)return;busy=true;$('#run').disabled=true;try{say('A analisar a fotografia…');const raw=await RawImage.fromBlob(file);const {pixel_values}=await processor(raw);const {logits,output_image}=await model({input_image:pixel_values});const tensor=logits??output_image;if(!tensor)throw new Error('O modelo não devolveu logits de máscara.');const matte=tensor[0].sigmoid().mul(255).to('uint8');const mask=await RawImage.fromTensor(matte);const alpha=document.createElement('canvas');alpha.width=bitmap.width;alpha.height=bitmap.height;const ac=alpha.getContext('2d');const mcanvas=document.createElement('canvas');mcanvas.width=mask.width;mcanvas.height=mask.height;const mc=mcanvas.getContext('2d');const mid=mc.createImageData(mask.width,mask.height);const md=mask.data;const channels=md.length/(mask.width*mask.height);for(let i=0;i<mask.width*mask.height;i++){let v=channels===1?md[i]:md[i*channels];mid.data[i*4]=255;mid.data[i*4+1]=255;mid.data[i*4+2]=255;mid.data[i*4+3]=v}mc.putImageData(mid,0,0);ac.imageSmoothingEnabled=true;ac.imageSmoothingQuality='high';ac.drawImage(mcanvas,0,0,bitmap.width,bitmap.height);finalCanvas=document.createElement('canvas');finalCanvas.width=bitmap.width;finalCanvas.height=bitmap.height;const fc=finalCanvas.getContext('2d');fc.drawImage(bitmap,0,0);const image=fc.getImageData(0,0,bitmap.width,bitmap.height),a=ac.getImageData(0,0,bitmap.width,bitmap.height);for(let i=0;i<image.data.length;i+=4)image.data[i+3]=Math.round(image.data[i+3]*a.data[i+3]/255);fc.putImageData(image,0,0);const scale=Math.min(1,1200/Math.max(bitmap.width,bitmap.height));out.width=Math.round(bitmap.width*scale);out.height=Math.round(bitmap.height*scale);rctx.clearRect(0,0,out.width,out.height);rctx.drawImage(finalCanvas,0,0,out.width,out.height);$('#save').disabled=false;say('Recorte concluído. Verifica os contornos do Audi.')}catch(e){console.error(e);say('Erro ao remover fundo: '+(e?.message||e))}finally{busy=false;$('#run').disabled=false}};
+$('#save').onclick=()=>{if(!finalCanvas)return;finalCanvas.toBlob(b=>{const u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='birefnet-audi.png';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)},'image/png')};
+</script>
+</body></html>
