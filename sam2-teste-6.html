@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste SAM 2.1 — 3 máscaras</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101318;color:#f3f5f7;font:16px system-ui,Arial;padding:16px;max-width:960px;margin:auto}
+h1{font-size:22px}p{color:#b8c0ca;line-height:1.45}.panel{background:#1b222b;border:1px solid #303a46;border-radius:14px;padding:14px;margin:14px 0}
+button,.file{background:#d9e2ec;color:#111923;border:0;border-radius:10px;padding:12px 14px;font-weight:700;font-size:15px;display:inline-block;margin:4px}
+button:disabled{opacity:.4}.stage{background:#080b0f;border-radius:10px;overflow:hidden;min-height:120px}
+canvas{display:block;max-width:100%;height:auto;margin:auto;touch-action:manipulation}
+#status{white-space:pre-wrap;color:#b7d7ff;font-size:14px}
+input[type=file]{display:none}.choices{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.choice{border:2px solid #3a4654;border-radius:10px;padding:6px;background:#111820;min-width:0}
+.choice.active{border-color:#28c77b}.choice canvas{width:100%;background:#080b0f;border-radius:6px}
+.choice button{width:100%;padding:9px 4px;font-size:13px;margin:6px 0 0}
+small{color:#aab4c0}
+</style>
+</head>
+<body>
+<h1>Teste SAM 2.1 — escolher entre 3 recortes</h1>
+<p>Carrega a fotografia, prepara o modelo e toca uma vez no centro do carro. O SAM 2.1 vai apresentar três máscaras alternativas para escolheres a melhor.</p>
+<div class="panel">
+<label class="file" for="file">Escolher fotografia</label><input id="file" type="file" accept="image/*">
+<button id="load" disabled>Preparar modelo</button>
+<button id="run" disabled>Gerar 3 opções</button>
+<button id="reset" disabled>Limpar</button>
+<button id="save" disabled>Guardar recorte escolhido</button>
+<div class="stage"><canvas id="view"></canvas></div>
+<p id="status">À espera de uma fotografia.</p>
+<div id="choices" class="choices"></div>
+<small>O modelo é descarregado na primeira utilização. As três opções são as três propostas de máscara do SAM 2.1; escolhe a que melhor preserva o contorno do automóvel.</small>
+</div>
+<script type="module">
+import {AutoProcessor,AutoModel,RawImage,env} from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2';
+const MODEL='CardAnvilModels/sam2.1-hiera-tiny-ONNX';
+const $=s=>document.querySelector(s),file=$('#file'),loadBtn=$('#load'),runBtn=$('#run'),resetBtn=$('#reset'),saveBtn=$('#save'),status=$('#status'),canvas=$('#view'),ctx=canvas.getContext('2d'),choices=$('#choices');
+let photo=null,imageFile=null,model=null,processor=null,point=null,masks=[],chosen=-1,busy=false,scale=1;
+function say(s){status.textContent=s}
+function alphaValue(v){return Math.max(0,Math.min(1,(v+0.12)/0.24))}
+function drawMain(){if(!photo)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(photo,0,0,canvas.width,canvas.height);if(chosen>=0){const m=masks[chosen],t=document.createElement('canvas');t.width=m.width;t.height=m.height;const c=t.getContext('2d'),im=c.createImageData(t.width,t.height);for(let i=0;i<m.data.length;i++){const a=alphaValue(m.data[i]);if(a>0){im.data[i*4]=0;im.data[i*4+1]=190;im.data[i*4+2]=255;im.data[i*4+3]=Math.round(a*105)}}c.putImageData(im,0,0);ctx.drawImage(t,0,0,canvas.width,canvas.height)}if(point){ctx.beginPath();ctx.arc(point[0]*scale,point[1]*scale,7,0,Math.PI*2);ctx.fillStyle='#ff3b30';ctx.fill();ctx.strokeStyle='white';ctx.lineWidth=2;ctx.stroke()}}
+function renderChoices(){choices.innerHTML='';masks.forEach((m,i)=>{const card=document.createElement('div');card.className='choice'+(chosen===i?' active':'');const cv=document.createElement('canvas');cv.width=m.width;cv.height=m.height;const c=cv.getContext('2d'),im=c.createImageData(m.width,m.height);for(let k=0;k<m.data.length;k++){const a=alphaValue(m.data[k]);im.data[k*4]=225;im.data[k*4+1]=232;im.data[k*4+2]=240;im.data[k*4+3]=Math.round(a*255)}c.putImageData(im,0,0);const label=document.createElement('div');label.textContent='Opção '+(i+1);label.style.fontWeight='700';label.style.fontSize='13px';const b=document.createElement('button');b.textContent=chosen===i?'Selecionada':'Escolher esta';b.onclick=()=>{chosen=i;renderChoices();drawMain();saveBtn.disabled=false;say('Opção '+(i+1)+' selecionada. Podes guardar o recorte PNG.')};card.append(label,cv,b);choices.append(card)})}
+file.addEventListener('change',async e=>{const f=e.target.files?.[0];if(!f)return;imageFile=f;photo=await createImageBitmap(f);scale=Math.min(1,1280/Math.max(photo.width,photo.height));canvas.width=Math.round(photo.width*scale);canvas.height=Math.round(photo.height*scale);point=null;masks=[];chosen=-1;choices.innerHTML='';drawMain();loadBtn.disabled=false;runBtn.disabled=true;resetBtn.disabled=false;saveBtn.disabled=true;say('Fotografia carregada. Prepara o modelo.')});
+canvas.addEventListener('pointerdown',e=>{if(!photo)return;const r=canvas.getBoundingClientRect();point=[(e.clientX-r.left)*canvas.width/r.width/scale,(e.clientY-r.top)*canvas.height/r.height/scale];masks=[];chosen=-1;choices.innerHTML='';drawMain();runBtn.disabled=!model;say('Ponto marcado. Carrega em Gerar 3 opções.')});
+loadBtn.onclick=async()=>{if(busy)return;busy=true;loadBtn.disabled=true;try{say('A carregar o SAM 2.1…');env.allowLocalModels=false;const device=('gpu'in navigator)?'webgpu':'wasm';processor=await AutoProcessor.from_pretrained(MODEL);model=await AutoModel.from_pretrained(MODEL,{device,dtype:'fp16'});runBtn.disabled=!point;say('Modelo preparado ('+device+'). Toca uma vez no carro e gera as três opções.')}catch(e){console.error(e);say('Erro ao carregar o modelo: '+e.message);loadBtn.disabled=false}finally{busy=false}};
+runBtn.onclick=async()=>{if(!model||!photo||!point||busy)return;busy=true;runBtn.disabled=true;try{say('A gerar as três máscaras alternativas…');const raw=await RawImage.fromBlob(imageFile);const inputs=await processor(raw,{input_points:[[[point[0],point[1]]]],input_labels:[[[1]]]});const output=await model(inputs);const full=await processor.post_process_masks(output.pred_masks,inputs.original_sizes,inputs.reshaped_input_sizes,{mask_threshold:0.0,binarize:false});const t=full[0],dims=t?.dims,values=t?.data;if(!dims||!values)throw new Error('O modelo não devolveu máscaras válidas.');const h=dims[dims.length-2],w=dims[dims.length-1],n=dims.length>=3?dims[dims.length-3]:1,plane=w*h;masks=[];for(let j=0;j<Math.min(3,n);j++){const data=new Float32Array(plane),off=j*plane;for(let k=0;k<plane;k++)data[k]=values[off+k];masks.push({data,width:w,height:h,score:output.iou_scores?.data?.[j]})}if(!masks.length)throw new Error('Não foram encontradas máscaras alternativas.');chosen=0;renderChoices();drawMain();saveBtn.disabled=false;say('Foram geradas '+masks.length+' opções. Compara as três e escolhe a que recorta melhor o Audi.')}catch(e){console.error(e);say('Erro na segmentação: '+e.message)}finally{busy=false;runBtn.disabled=!point}};
+resetBtn.onclick=()=>{point=null;masks=[];chosen=-1;choices.innerHTML='';if(photo)drawMain();runBtn.disabled=true;saveBtn.disabled=true;say('Limpo. Toca novamente no carro para marcar um ponto.')};
+saveBtn.onclick=()=>{if(!photo||chosen<0)return;const m=masks[chosen],out=document.createElement('canvas');out.width=photo.width;out.height=photo.height;const oc=out.getContext('2d');oc.drawImage(photo,0,0);const tmp=document.createElement('canvas');tmp.width=m.width;tmp.height=m.height;const tc=tmp.getContext('2d'),id=tc.createImageData(m.width,m.height);for(let i=0;i<m.data.length;i++)id.data[i*4+3]=Math.round(alphaValue(m.data[i])*255);tc.putImageData(id,0,0);const a=document.createElement('canvas');a.width=photo.width;a.height=photo.height;const ac=a.getContext('2d');ac.imageSmoothingEnabled=true;ac.imageSmoothingQuality='high';ac.drawImage(tmp,0,0,photo.width,photo.height);oc.globalCompositeOperation='destination-in';oc.drawImage(a,0,0);out.toBlob(b=>{const u=URL.createObjectURL(b),link=document.createElement('a');link.href=u;link.download='sam2-opcao-'+(chosen+1)+'.png';link.click();URL.revokeObjectURL(u)},'image/png')};
+</script>
+</body></html>
