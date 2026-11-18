@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Equação Motor — teste BiRefNet Lite</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:18px;background:#101318;color:#f4f5f7;font:16px system-ui,Arial;max-width:900px;margin:auto}h1{font-size:22px}p{color:#bbc3ce;line-height:1.45}.panel{background:#1b222b;border:1px solid #303a46;border-radius:14px;padding:15px;margin:14px 0}button,.file{display:inline-block;background:#d9e2ec;color:#111923;border:0;border-radius:10px;padding:12px 14px;margin:5px 4px 5px 0;font-weight:700;font-size:15px}button:disabled{opacity:.4}input[type=file]{display:none}.stage{background:#090c10;border-radius:10px;overflow:hidden;min-height:150px}canvas{display:block;max-width:100%;height:auto;margin:auto}#status{white-space:pre-wrap;color:#b9d9ff;font-size:14px}.preview{display:grid;grid-template-columns:1fr 1fr;gap:10px}.preview>div{min-width:0}.preview canvas{width:100%;background:repeating-conic-gradient(#333 0% 25%,#222 0% 50%) 50%/18px 18px;border-radius:8px}.tag{font-size:12px;color:#c6d0dc;margin:5px 0}
+</style>
+</head>
+<body>
+<h1>Teste independente — BiRefNet Lite</h1>
+<p>Este teste usa um motor diferente do SAM 2.1, especializado em remover fundos. Carrega a mesma fotografia do Audi e compara o recorte. Não altera o estúdio principal.</p>
+<div class="panel">
+<label class="file" for="file">Escolher fotografia</label><input id="file" type="file" accept="image/*">
+<button id="load" disabled>Preparar BiRefNet</button><button id="run" disabled>Remover fundo</button><button id="save" disabled>Guardar PNG</button>
+<p id="status">À espera de uma fotografia.</p>
+<div class="preview">
+<div><div class="tag">Fotografia original</div><div class="stage"><canvas id="original"></canvas></div></div>
+<div><div class="tag">Recorte com transparência</div><div class="stage"><canvas id="result"></canvas></div></div>
+</div>
+<p class="tag">Primeira utilização: descarrega aproximadamente 100 MB de pesos. O processamento é feito no navegador. Requer WebGPU; se o dispositivo não suportar, apresenta um erro em vez de bloquear.</p>
+</div>
+<script type="module">
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2';
+env.allowLocalModels=false;env.useBrowserCache=true;
+const MODEL='shozebDev/birefnet-lite-512-onnx';
+const $=s=>document.querySelector(s),orig=$('#original'),out=$('#result'),octx=orig.getContext('2d'),rctx=out.getContext('2d');
+let bitmap=null,file=null,remover=null,rgba=null,busy=false;
+function say(s){$('#status').textContent=s}
+$('#file').onchange=async e=>{file=e.target.files?.[0];if(!file)return;bitmap=await createImageBitmap(file);const scale=Math.min(1,1200/Math.max(bitmap.width,bitmap.height));orig.width=Math.round(bitmap.width*scale);orig.height=Math.round(bitmap.height*scale);out.width=orig.width;out.height=orig.height;octx.drawImage(bitmap,0,0,orig.width,orig.height);rctx.clearRect(0,0,out.width,out.height);rgba=null;$('#load').disabled=false;$('#run').disabled=true;$('#save').disabled=true;say('Fotografia carregada. Prepara o BiRefNet Lite.')};
+$('#load').onclick=async()=>{if(busy)return;busy=true;$('#load').disabled=true;try{if(!('gpu'in navigator))throw new Error('Este navegador não disponibiliza WebGPU. Experimenta Chrome atualizado.');say('A descarregar e preparar BiRefNet Lite. Primeira carga pode demorar…');remover=await pipeline('image-segmentation',MODEL,{device:'webgpu'});$('#run').disabled=false;say('BiRefNet Lite preparado. Carrega em Remover fundo.')}catch(e){console.error(e);say('Não foi possível preparar o modelo: '+(e?.message||e));$('#load').disabled=false}finally{busy=false}};
+$('#run').onclick=async()=>{if(!remover||!bitmap||busy)return;busy=true;$('#run').disabled=true;try{say('A analisar a fotografia com BiRefNet Lite…');const results=await remover(file);console.log('BiRefNet output',results);if(!Array.isArray(results)||!results.length)throw new Error('O modelo não devolveu uma máscara.');let mask=results[0].mask;if(!mask)throw new Error('A resposta do modelo não contém uma máscara.');let mw=mask.width??mask.dims?.at(-1),mh=mask.height??mask.dims?.at(-2);if(!mw||!mh)throw new Error('Dimensões da máscara não reconhecidas.');let mcanvas=document.createElement('canvas');mcanvas.width=mw;mcanvas.height=mh;let mctx=mcanvas.getContext('2d');if(mask.data){const id=mctx.createImageData(mw,mh);const d=mask.data;for(let i=0;i<mw*mh;i++){let v=d.length===mw*mh?d[i]:d[i*4];id.data[i*4]=255;id.data[i*4+1]=255;id.data[i*4+2]=255;id.data[i*4+3]=Math.round(Math.max(0,Math.min(1,v>1?v/255:v))*255)}mctx.putImageData(id,0,0)}else if(mask.toCanvas){mcanvas=mask.toCanvas()}else throw new Error('Formato da máscara não suportado.');const full=document.createElement('canvas');full.width=bitmap.width;full.height=bitmap.height;const fctx=full.getContext('2d');fctx.drawImage(bitmap,0,0);const alpha=document.createElement('canvas');alpha.width=bitmap.width;alpha.height=bitmap.height;const actx=alpha.getContext('2d');actx.imageSmoothingEnabled=true;actx.imageSmoothingQuality='high';actx.drawImage(mcanvas,0,0,bitmap.width,bitmap.height);const im=fctx.getImageData(0,0,full.width,full.height),am=actx.getImageData(0,0,full.width,full.height);for(let i=0;i<im.data.length;i+=4){const a=am.data[i+3]/255;im.data[i+3]=Math.round(im.data[i+3]*a)}fctx.putImageData(im,0,0);rgba=full;const scale=Math.min(1,1200/Math.max(bitmap.width,bitmap.height));out.width=Math.round(bitmap.width*scale);out.height=Math.round(bitmap.height*scale);rctx.clearRect(0,0,out.width,out.height);rctx.drawImage(full,0,0,out.width,out.height);$('#save').disabled=false;say('Recorte concluído. Avalia o tejadilho, vidros, pneus, jantes e espelhos.')}catch(e){console.error(e);say('Erro ao remover fundo: '+(e?.message||e))}finally{busy=false;$('#run').disabled=false}};
+$('#save').onclick=()=>{if(!rgba)return;rgba.toBlob(b=>{const u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='birefnet-audi.png';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)},'image/png')};
+</script>
+</body></html>
